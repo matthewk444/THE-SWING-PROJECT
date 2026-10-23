@@ -1,0 +1,15 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {describe,dtw,rank,validateReference,summarize,resample} from '../live/engine.mjs';
+const meta={hand:'Right',direction:'Left',view:'Open side',drill:'Tee'};
+const frames=(offset=0)=>Array.from({length:25},(_,i)=>({t:i*50,valid:true,vector:[.5+i/100,.7,.6,.8,1,Math.sin(i/24*Math.PI)+offset,-.5]}));
+const ref=(name,offset=0)=>({version:1,name,source:'Synthetic unit-test data, not an athlete',meta,frames:frames(offset)});
+test('DTW exact sequence and relative rank',()=>{const a=resample(frames());assert.equal(dtw(a,a),0);const r=rank(ref('query'),[ref('different',1),ref('same')]);assert.equal(r[0].reference.name,'same');assert.ok(r[1].distance>0);});
+test('filters incompatible views and practice types',()=>{assert.equal(rank(ref('q'),[{...ref('x'),meta:{...meta,view:'Back side'}},{...ref('y'),meta:{...meta,drill:'Live pitch'}}]).length,0);});
+test('rejects missing, duplicate and nonfinite timing / malicious shapes',()=>{assert.throws(()=>validateReference({...ref('x'),frames:[{t:NaN,valid:true,vector:[]}]}));const r=ref('x');r.frames[1].t=0;assert.throws(()=>validateReference(r));assert.throws(()=>validateReference({...ref('x'),name:''}));const r2=ref('x');r2.frames[0].vector[0]=Infinity;assert.throws(()=>validateReference(r2));});
+test('coverage and timing gaps suppress matching',()=>{const r=ref('x');r.frames.slice(0,12).forEach(f=>f.valid=false);assert.equal(summarize(r.frames).adequate,false);assert.throws(()=>rank(r,[]));const f=frames();f[24].t=5000;assert.equal(summarize(f).adequate,false);});
+test('no pose and multiple people abstain',()=>{assert.equal(describe([],1280,720,meta).valid,false);assert.equal(describe([[],[]],1280,720,meta).valid,false);});
+test('geometry handles pixel aspect ratio and pitcher direction',()=>{const p=Array.from({length:33},()=>({x:.5,y:.5,visibility:.99,presence:.99}));for(const [i,x,y]of [[0,.5,.1],[11,.4,.2],[12,.6,.2],[23,.4,.5],[24,.6,.5],[25,.4,.7],[27,.4,.9],[26,.8,.5],[28,.8,.8],[13,.3,.4],[15,.3,.6],[14,.7,.4],[16,.7,.6]])Object.assign(p[i],{x,y});const a=describe([p],1920,1080,meta);assert.equal(a.valid,true);assert.ok(Math.abs(a.knee-180)<1e-6);const b=describe([p],1920,1080,{...meta,hand:'Left'});assert.ok(Math.abs(b.knee-90)<1e-6);p[25].visibility=.1;assert.equal(describe([p],1920,1080,meta).valid,false);});
+test('resampling respects timestamp intervals',()=>{const f=[{t:0,valid:true,vector:[0]},{t:50,valid:true,vector:[1]},{t:1000,valid:true,vector:[2]}];assert.ok(resample(f,3)[1][0]>1);});
+
+test('standing still and self-matches are excluded',()=>{const f=frames();f.forEach(x=>x.vector=[.5,.7,.6,.8,1,0,-.5]);assert.equal(summarize(f).adequate,false);const r={...ref('same capture'),created:'fixture-session'};assert.equal(rank(r,[r]).length,0);});
+test('long occlusions are not bridged by interpolation',()=>{const f=Array.from({length:50},(_,i)=>({t:i*50,valid:true,vector:[.5+i/100,.7,.6,.8,1,i/20,-.5]}));for(let i=20;i<30;i++)f[i].valid=false;assert.equal(summarize(f).adequate,false);});
